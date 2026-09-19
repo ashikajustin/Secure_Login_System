@@ -6,7 +6,7 @@ import os
 
 app = Flask(__name__)
 
-# Secret key for secure sessions
+# Secret key for Flask sessions
 app.secret_key = os.environ.get(
     "SECRET_KEY",
     "change-this-secret-key-before-production"
@@ -38,26 +38,18 @@ def init_database():
     connection.close()
 
 
-# ---------------- VALIDATION ----------------
-
-def valid_username(username):
-    return bool(re.fullmatch(r"[A-Za-z0-9_]{3,30}", username))
-
-
-def valid_password(password):
-    return len(password) >= 8
-
-
 # ---------------- HOME ----------------
 
 @app.route("/")
 def home():
+
     if "user_id" in session:
         return render_template_string("""
         <!DOCTYPE html>
         <html>
         <head>
             <title>Secure Login System</title>
+
             <style>
                 body {
                     font-family: Arial;
@@ -68,31 +60,36 @@ def home():
 
                 .box {
                     background: white;
-                    width: 400px;
+                    width: 450px;
                     margin: auto;
-                    padding: 30px;
+                    padding: 35px;
                     border-radius: 10px;
                     box-shadow: 0 0 10px #ccc;
                 }
 
                 a {
                     display: inline-block;
-                    margin-top: 20px;
+                    margin: 10px;
                     padding: 10px 20px;
-                    background: #d9534f;
+                    background: #337ab7;
                     color: white;
                     text-decoration: none;
                     border-radius: 5px;
                 }
             </style>
         </head>
+
         <body>
             <div class="box">
-                <h1>Welcome!</h1>
-                <p>You are logged in as:</p>
-                <h2>{{ username }}</h2>
+
+                <h1>Secure Login System</h1>
+
+                <h2>Welcome, {{ username }}!</h2>
+
+                <p>You are successfully logged in.</p>
 
                 <a href="/logout">Logout</a>
+
             </div>
         </body>
         </html>
@@ -103,6 +100,7 @@ def home():
     <html>
     <head>
         <title>Secure Login System</title>
+
         <style>
             body {
                 font-family: Arial;
@@ -113,9 +111,9 @@ def home():
 
             .box {
                 background: white;
-                width: 400px;
+                width: 450px;
                 margin: auto;
-                padding: 30px;
+                padding: 35px;
                 border-radius: 10px;
                 box-shadow: 0 0 10px #ccc;
             }
@@ -134,11 +132,14 @@ def home():
 
     <body>
         <div class="box">
+
             <h1>Secure Login System</h1>
+
             <p>Secure user authentication using bcrypt.</p>
 
             <a href="/register">Register</a>
             <a href="/login">Login</a>
+
         </div>
     </body>
     </html>
@@ -151,50 +152,64 @@ def home():
 def register():
 
     message = ""
+    success = False
 
     if request.method == "POST":
 
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
 
-        # Basic input validation
-        if not valid_username(username):
-            message = "Username must contain 3-30 letters, numbers, or underscores."
+        # Username validation
+        if not re.fullmatch(r"[A-Za-z0-9_]{3,30}", username):
+            message = (
+                "Username must contain 3-30 characters "
+                "and use only letters, numbers, and underscore."
+            )
 
-        elif not valid_password(password):
+        # Password validation
+        elif len(password) < 8:
             message = "Password must contain at least 8 characters."
 
         else:
+
             connection = get_db_connection()
 
-            try:
+            # Check whether username already exists
+            existing_user = connection.execute(
+                "SELECT id FROM users WHERE username = ?",
+                (username,)
+            ).fetchone()
+
+            if existing_user:
+                message = "Username already exists."
+
+            else:
+
                 # Hash password using bcrypt
                 password_hash = bcrypt.hashpw(
                     password.encode("utf-8"),
                     bcrypt.gensalt()
-                )
+                ).decode("utf-8")
 
-                # Parameterized SQL query prevents SQL injection
+                # Parameterized query protects against SQL injection
                 connection.execute(
                     "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-                    (username, password_hash.decode("utf-8"))
+                    (username, password_hash)
                 )
 
                 connection.commit()
-
                 connection.close()
 
-                return redirect(url_for("login"))
+                return redirect(url_for("login", registered="1"))
 
-            except sqlite3.IntegrityError:
-                connection.close()
-                message = "Username already exists."
+            connection.close()
 
     return render_template_string("""
     <!DOCTYPE html>
     <html>
     <head>
         <title>Register</title>
+
         <style>
             body {
                 font-family: Arial;
@@ -229,18 +244,25 @@ def register():
             .error {
                 color: red;
             }
+
+            a {
+                color: #337ab7;
+            }
         </style>
     </head>
 
     <body>
+
         <div class="box">
-            <h1>Create Account</h1>
+
+            <h1>Register</h1>
 
             {% if message %}
                 <p class="error">{{ message }}</p>
             {% endif %}
 
             <form method="POST">
+
                 <input
                     type="text"
                     name="username"
@@ -256,13 +278,16 @@ def register():
                 >
 
                 <button type="submit">Register</button>
+
             </form>
 
             <p>
                 Already have an account?
                 <a href="/login">Login</a>
             </p>
+
         </div>
+
     </body>
     </html>
     """, message=message)
@@ -273,7 +298,11 @@ def register():
 @app.route("/login", methods=["GET", "POST"])
 def login():
 
-    message = ""
+    message = (
+        "Registration successful. Please log in."
+        if request.args.get("registered") == "1"
+        else ""
+    )
 
     if request.method == "POST":
 
@@ -295,7 +324,10 @@ def login():
             stored_hash = user["password_hash"].encode("utf-8")
 
             # Check password against bcrypt hash
-            if bcrypt.checkpw(password.encode("utf-8"), stored_hash):
+            if bcrypt.checkpw(
+                password.encode("utf-8"),
+                stored_hash
+            ):
 
                 session["user_id"] = user["id"]
                 session["username"] = user["username"]
@@ -309,6 +341,7 @@ def login():
     <html>
     <head>
         <title>Login</title>
+
         <style>
             body {
                 font-family: Arial;
@@ -343,18 +376,31 @@ def login():
             .error {
                 color: red;
             }
+
+            .success {
+                color: green;
+            }
+
+            a {
+                color: #337ab7;
+            }
         </style>
     </head>
 
     <body>
+
         <div class="box">
+
             <h1>Login</h1>
 
             {% if message %}
-                <p class="error">{{ message }}</p>
+                <p class="{% if 'successful' in message %}success{% else %}error{% endif %}">
+                    {{ message }}
+                </p>
             {% endif %}
 
             <form method="POST">
+
                 <input
                     type="text"
                     name="username"
@@ -370,13 +416,16 @@ def login():
                 >
 
                 <button type="submit">Login</button>
+
             </form>
 
             <p>
                 Don't have an account?
                 <a href="/register">Register</a>
             </p>
+
         </div>
+
     </body>
     </html>
     """, message=message)
@@ -387,7 +436,6 @@ def login():
 @app.route("/logout")
 def logout():
 
-    # Clear the user's session
     session.clear()
 
     return redirect(url_for("home"))
@@ -396,6 +444,7 @@ def logout():
 # ---------------- START APPLICATION ----------------
 
 if __name__ == "__main__":
+
     init_database()
 
-    app.run(debug=True)
+    app.run(debug=False)
